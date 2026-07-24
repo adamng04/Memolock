@@ -72,8 +72,7 @@ npm run native:portable
 ## Release
 
 The current release is `0.1-rc1`. The portable archive contains
-`memolock-win_x64.exe` at its root. Because the executable is unsigned, Windows
-may display a security or reputation warning.
+`memolock-win_x64.exe` at its root. Memolock is currently not digitally code signed. Because of this, Windows Defender SmartScreen may display an "unrecognized app" warning the first time you run it.
 
 ## Project agents
 
