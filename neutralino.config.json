@@ -1,0 +1,57 @@
+{
+  "applicationId": "js.yearindata.app",
+  "version": "0.1.0-rc.2",
+  "applicationName": "Memolock",
+  "description": "Memolock",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/web-dist/",
+  "url": "/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "nativeAllowList": [
+    "app.*",
+    "window.*",
+    "events.*",
+    "filesystem.createDirectory",
+    "filesystem.readFile",
+    "filesystem.writeFile",
+    "filesystem.getStats",
+    "os.open"
+  ],
+  "modes": {
+    "window": {
+      "title": "Memolock",
+      "width": 1280,
+      "height": 820,
+      "minWidth": 840,
+      "minHeight": 620,
+      "enableInspector": false,
+      "borderless": false,
+      "maximize": false,
+      "hidden": false,
+      "resizable": true,
+      "center": true,
+      "exitProcessOnClose": true
+    }
+  },
+  "cli": {
+    "binaryName": "memolock",
+    "resourcesPath": "/web-dist/",
+    "extensionsPath": "/extensions/",
+    "binaryVersion": "6.3.0",
+    "clientVersion": "6.3.0",
+    "frontendLibrary": {
+      "patchFile": "/",
+      "devUrl": "http://localhost:5173",
+      "projectPath": "/",
+      "initCommand": "npm run dev",
+      "initSuccessResponse": "Local",
+      "initTestCommand": "npm run test",
+      "initBuildCommand": "npm run build"
+    },
+    "target": [
+      "win_x64"
+    ]
+  }
+}

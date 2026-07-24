@@ -1,0 +1,19 @@
+﻿[agents]
+enabled = true
+max_concurrent_threads_per_session = 4
+
+[agents.implementation]
+description = "Implements focused application changes in the project source."
+config_file = "implementation.toml"
+
+[agents.vitest]
+description = "Maintains focused tests and runs the npm verification suite."
+config_file = "vitest.toml"
+
+[agents.artifact_fixer]
+description = "Synchronizes lockfiles and regenerates verified build artifacts."
+config_file = "artifact-fixer.toml"
+
+[agents.ui_ux_reviewer]
+description = "Reviews completed UI work for usability, accessibility, responsiveness, and visual consistency."
+config_file = "ui-ux.toml"
