@@ -307,7 +307,7 @@ describe('personal annual report', () => {
     await flushPromises()
 
     expect(nativeApi.os.open).toHaveBeenCalledOnce()
-    expect(nativeApi.os.open).toHaveBeenCalledWith('https://adamngshrine.com')
+    expect(nativeApi.os.open).toHaveBeenCalledWith('https://adamngshrine.com/index/miscs/memolock')
   })
 
   it('uses Memolock branding without sidebar identity or metric code badges', async () => {

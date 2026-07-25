@@ -188,7 +188,7 @@ function closeSettings() {
   requestAnimationFrame(() => settingsTrigger.value?.focus())
 }
 async function openHelp() {
-  const url = 'https://adamngshrine.com'
+  const url = 'https://adamngshrine.com/index/miscs/memolock'
   try {
     if (typeof window.NL_PATH === 'string') await os.open(url)
     else window.open(url, '_blank', 'noopener,noreferrer')
@@ -484,7 +484,7 @@ function normalizeOptionalNumbers(value: AnnualReport) {
     </Teleport>
     <div v-if="isEditing" class="overlay" @click.self="closeEditor">
       <section v-if="!isConfirmingLock" class="editor" role="dialog" aria-modal="true" aria-labelledby="editor-title" tabindex="-1">
-        <div class="modal-head"><div><h4>What did you accomplish this 2025?</h4></div><button type="button" aria-label="Close form" @click="closeEditor">×</button></div>
+        <div class="modal-head"><div><h4>What did you accomplish in {{ reportYear }}?</h4></div><button type="button" aria-label="Close form" @click="closeEditor">×</button></div>
         <form @submit.prevent="saveAndClose">
           <div class="field-grid">
             <label>Report title<input v-model.trim="draft.title" type="text" /></label>
@@ -541,7 +541,7 @@ function normalizeOptionalNumbers(value: AnnualReport) {
         </section>
         <section class="settings-section about"><div><h3>About this app</h3><p>Memolock · version 0.1-rc1</p></div><p>Your annual archive stays in a readable JSON file beside the app. There are no accounts, analytics, or cloud services.</p></section>
         <p v-if="storageError" class="storage-error" role="alert">{{ storageError }}</p>
-        <a class="help-button" href="https://adamngshrine.com" @click.prevent="openHelp"><span>Help desk</span><small>adamngshrine.com ↗</small></a>
+        <a class="help-button" href="https://adamngshrine.com/index/miscs/memolock" @click.prevent="openHelp"><span>Help desk</span><small>↗</small></a>
       </section>
     </div>
   </div>

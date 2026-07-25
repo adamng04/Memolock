@@ -612,7 +612,7 @@ textarea {
   border: 1px solid rgb(138, 138, 138) !important;
 }
 .metric-card.interactive:hover {
-  box-shadow: 0 8px 24px #16201914;
+  box-shadow: 0 8px 10px #2525251d;
 }
 .metric-card.interactive:hover .metric-affordance {
   color: #fff;
