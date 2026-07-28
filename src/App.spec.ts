@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+/// <reference path="./env.d.ts" />
 
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,17 +10,27 @@ import { createBlankReport } from './types'
 
 const styles = readFileSync('src/styles.css', 'utf8')
 const packageManifest = JSON.parse(readFileSync('package.json', 'utf8')) as { name: string; version: string }
+const packageLock = JSON.parse(readFileSync('package-lock.json', 'utf8')) as {
+  name: string
+  version: string
+  packages: Record<string, { name?: string; version?: string }>
+}
 const neutralinoConfig = JSON.parse(readFileSync('neutralino.config.json', 'utf8')) as {
   applicationId: string
   version: string
+  applicationName: string
+  author: string
+  description: string
+  copyright: string
   cli: { binaryName: string }
   modes: { window: { title: string } }
 }
 const indexHtml = readFileSync('index.html', 'utf8')
+const readme = readFileSync('README.md', 'utf8')
 
 const nativeApi = vi.hoisted(() => ({
   app: { exit: vi.fn() },
-  os: { open: vi.fn() },
+  os: { open: vi.fn(), getEnv: vi.fn(), showOpenDialog: vi.fn() },
   window: { minimize: vi.fn(), maximize: vi.fn(), unmaximize: vi.fn() },
   events: { on: vi.fn(), off: vi.fn() },
   filesystem: {
@@ -34,12 +45,14 @@ const archiveKey = 'personal-annual-report-archive'
 const lockKey = `${archiveKey}:lock`
 const draftKey = `${archiveKey}:draft`
 const settingsKey = `${archiveKey}:settings`
+const mountedWrappers: Array<{ unmount: () => void }> = []
 
 async function mountApp(search = '', dismissNewYear = true) {
   window.history.replaceState({}, '', `/${search}`)
   vi.resetModules()
   const { default: App } = await import('./App.vue')
   const wrapper = mount(App)
+  mountedWrappers.push(wrapper)
   await flushPromises()
   if (dismissNewYear) {
     document.querySelector<HTMLButtonElement>('[aria-label="Dismiss new year reminder"]')?.click()
@@ -91,6 +104,8 @@ describe('personal annual report', () => {
     delete window.NL_PATH
     delete window.NL_OS
     nativeApi.os.open.mockResolvedValue(undefined)
+    nativeApi.os.getEnv.mockResolvedValue('C:\\Users\\Ada')
+    nativeApi.os.showOpenDialog.mockResolvedValue([])
     nativeApi.filesystem.createDirectory.mockResolvedValue(undefined)
     nativeApi.filesystem.writeFile.mockResolvedValue(undefined)
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -100,6 +115,7 @@ describe('personal annual report', () => {
   })
 
   afterEach(() => {
+    mountedWrappers.splice(0).reverse().forEach((wrapper) => wrapper.unmount())
     vi.restoreAllMocks()
     vi.clearAllMocks()
     vi.unstubAllGlobals()
@@ -110,12 +126,14 @@ describe('personal annual report', () => {
   it('starts with a zeroed 2025 report and a clear empty-state action', async () => {
     expect(seedReport).toEqual(createBlankReport(2025))
     const wrapper = await mountApp()
+    expect(wrapper.find('.export-report-button').exists()).toBe(false)
 
-    expect(wrapper.get('.topbar').text()).toContain('Add a title here')
+    expect(wrapper.get('.topbar').text()).toContain('Untitled')
     expect(wrapper.get('.empty-callout').text()).toContain("You haven't added an entry in 2025 yet")
     expect(wrapper.get('.empty-callout button').text()).toBe('Add an entry')
-    expect(wrapper.findAll('.metric-card')).toHaveLength(6)
-    expect(wrapper.findAll('.metric-card').every((card) => /^0h?$/.test(card.get('strong').text()))).toBe(true)
+    expect(wrapper.findAll('.metric-card')).toHaveLength(7)
+    expect(wrapper.findAll('.metric-card').slice(0, 6).every((card) => /^0h?$/.test(card.get('strong').text()))).toBe(true)
+    expect(wrapper.get('.add-more-card').text()).toContain('Add more entries')
   })
 
   it('shows a 2026 reminder for completed year 2025 and dismisses without creating 2026', async () => {
@@ -126,7 +144,7 @@ describe('personal annual report', () => {
     expect(prompt.getAttribute('aria-modal')).toBe('true')
     expect(prompt.textContent).toContain("It's 2026")
     expect(prompt.textContent).toContain('Start 2025 report')
-    expect(wrapper.get('.topbar').text()).toContain('2025')
+    expect(wrapper.get('nav button[aria-current="page"]').text()).toContain('2025')
 
     prompt.querySelector<HTMLButtonElement>('[aria-label="Dismiss new year reminder"]')!.click()
     await flushPromises()
@@ -140,11 +158,10 @@ describe('personal annual report', () => {
     await flushPromises()
 
     expect(document.querySelector('.new-year-dialog')).toBeNull()
-    expect(wrapper.get('.topbar').text()).toContain('Add a title here')
+    expect(wrapper.get('.topbar').text()).toContain('Untitled')
     expect(wrapper.findAll('nav button').some((button) => button.text().includes('2026'))).toBe(false)
     expect(wrapper.get('nav').text()).not.toContain('logged')
-    expect(wrapper.get('.year-display').text()).toContain('2025')
-    expect(wrapper.find('.year-display input').exists()).toBe(false)
+    expect(wrapper.get('nav button[aria-current="page"]').text()).toContain('2025')
     expect(wrapper.findAll('.entry-launcher')).toHaveLength(2)
     expect(wrapper.findAll('label').some((label) => label.text() === 'Books read')).toBe(false)
     expect(wrapper.findAll('label').some((label) => label.text() === 'Places visited')).toBe(false)
@@ -165,7 +182,7 @@ describe('personal annual report', () => {
     }))
     const meaningful = await mountApp('', false)
     expect(document.querySelector('.new-year-dialog')).toBeNull()
-    expect(meaningful.get('.topbar').text()).toContain('2026')
+    expect(meaningful.get('nav button[aria-current="page"]').text()).toContain('2026')
   })
 
   it('targets 2026 in 2027 and preserves every preexisting archive year', async () => {
@@ -179,8 +196,7 @@ describe('personal annual report', () => {
     document.querySelector<HTMLButtonElement>('.new-year-dialog .primary')!.click()
     await flushPromises()
 
-    expect(wrapper.get('.year-display').text()).toContain('2026')
-    expect(wrapper.find('.year-display input').exists()).toBe(false)
+    expect(wrapper.get('nav button[aria-current="page"]').text()).toContain('2026')
     const sidebar = wrapper.get('nav').text()
     expect(sidebar).toContain('2023')
     expect(sidebar).toContain('2024')
@@ -193,7 +209,7 @@ describe('personal annual report', () => {
     const first = await mountApp()
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(document.documentElement.style.colorScheme).toBe('dark')
-    await first.get('.settings-button').trigger('click')
+    await first.get('.sidebar > .settings-button').trigger('click')
     expect(first.get('.settings-panel').text()).toContain('About this app')
     expect(first.get('.settings-panel').text()).toContain('no accounts, analytics, or cloud services')
     expect(first.findAll('.theme-control button').map((button) => button.text())).toEqual(['Light', 'Dark', 'OLED'])
@@ -206,13 +222,13 @@ describe('personal annual report', () => {
 
     const restored = await mountApp()
     expect(document.documentElement.dataset.theme).toBe('dark')
-    await restored.get('.settings-button').trigger('click')
+    await restored.get('.sidebar > .settings-button').trigger('click')
     expect(buttonWithText(restored, 'Dark').attributes('aria-pressed')).toBe('true')
   })
 
   it('persists and restores the true-black OLED theme', async () => {
     const first = await mountApp()
-    await first.get('.settings-button').trigger('click')
+    await first.get('.sidebar > .settings-button').trigger('click')
     await buttonWithText(first, 'OLED').trigger('click')
     await flushPromises()
 
@@ -224,19 +240,22 @@ describe('personal annual report', () => {
 
     const restored = await mountApp()
     expect(document.documentElement.dataset.theme).toBe('oled')
-    await restored.get('.settings-button').trigger('click')
+    await restored.get('.sidebar > .settings-button').trigger('click')
     expect(buttonWithText(restored, 'OLED').attributes('aria-pressed')).toBe('true')
     expect(styles).toContain('[data-theme="oled"]')
     expect(styles).toContain('--page: #000;')
     expect(styles).toContain('--surface: #000;')
-    expect(styles).toContain('[data-theme="oled"] body, [data-theme="oled"] .loading-state, [data-theme="oled"] .content')
+    expect(styles).toContain('[data-theme="oled"] body,')
+    expect(styles).toContain('[data-theme="oled"] .loading-state,')
+    expect(styles).toContain('[data-theme="oled"] .content {')
     expect(styles).toContain('[data-theme="oled"] .overlay')
     expect(styles).toContain('background: #000d;')
-    expect(styles).toContain('[data-theme="oled"] .lock-status')
+    expect(styles).not.toContain('[data-theme="oled"] .lock-status')
+    expect(styles).toMatch(/\.lock-status \{[\s\S]*?padding: 12px 16px;[\s\S]*?color: #fff;[\s\S]*?background: #a83627;/)
     expect(styles).toContain('[data-theme="oled"] .saved-status')
     expect(styles).toContain('color: var(--success-text);')
     expect(styles).toContain('background: var(--success-surface)')
-    expect(styles).toContain('[data-theme="oled"] .lock-date')
+    expect(styles).not.toContain('.lock-date')
     expect(styles).toContain('color: var(--text);')
     expect(styles).toContain('background: var(--surface-muted);')
     expect(styles).toContain('border-color: var(--line);')
@@ -251,7 +270,7 @@ describe('personal annual report', () => {
     })
     const wrapper = await mountApp()
     document.body.appendChild(wrapper.element)
-    const trigger = wrapper.get<HTMLButtonElement>('.settings-button')
+    const trigger = wrapper.get<HTMLButtonElement>('.sidebar > .settings-button')
 
     await trigger.trigger('click')
     await flushPromises()
@@ -279,7 +298,7 @@ describe('personal annual report', () => {
 
   it('renders exactly 30 accessible accents and persists personalization across launches', async () => {
     const first = await mountApp()
-    await first.get('.settings-button').trigger('click')
+    await first.get('.sidebar > .settings-button').trigger('click')
     const swatches = first.findAll('.accent-choice')
     expect(swatches).toHaveLength(30)
     expect(new Set(swatches.map((swatch) => swatch.attributes('aria-label'))).size).toBe(30)
@@ -295,14 +314,14 @@ describe('personal annual report', () => {
 
     const restored = await mountApp()
     expect(document.documentElement.dataset.accent).toBe('navy')
-    await restored.get('.settings-button').trigger('click')
+    await restored.get('.sidebar > .settings-button').trigger('click')
     expect(restored.get('button[aria-label="Navy accent"]').attributes('aria-pressed')).toBe('true')
   })
 
   it('opens the exact help URL with the Neutralino OS API in native mode', async () => {
     const wrapper = await mountApp()
     window.NL_PATH = 'C:\\Portable\\YearInData'
-    await wrapper.get('.settings-button').trigger('click')
+    await wrapper.get('.sidebar > .settings-button').trigger('click')
     await wrapper.get('.help-button').trigger('click')
     await flushPromises()
 
@@ -319,8 +338,9 @@ describe('personal annual report', () => {
       expect.stringContaining('View details'),
       expect.stringContaining('View details'),
     ])
-    await wrapper.get('.settings-button').trigger('click')
-    expect(wrapper.get('.settings-panel').text()).toContain('Memolock · version 0.1-rc1')
+    await wrapper.get('.sidebar > .settings-button').trigger('click')
+    expect(wrapper.get('.settings-panel').text()).toContain('Memolock · version 0.1')
+    expect(wrapper.get('.settings-panel').text()).not.toMatch(/0\.1-rc1|0\.1\.0-rc\.2|prerelease/i)
     expect(wrapper.text()).not.toContain('Year in Data')
   })
 
@@ -407,25 +427,23 @@ describe('personal annual report', () => {
   })
 
   it('applies the readable typography floor to standard interface text', () => {
-    expect(styles).toContain('/* Readable application typography and true-black OLED surfaces */')
     expect(styles).toContain(':root {\n  font-size: 16px;')
-    expect(styles).toContain('.topbar p, .modal-head p, .lock-panel > p:first-of-type, .lock-date span, .empty-callout small {\n  font-size: 12px;')
-    expect(styles).toContain('.secondary, .primary, .danger, .edit-button, .lock-button, .settings-button, .theme-control button, .empty-callout button, .new-year-dialog > .primary {\n  font-size: 13px;')
-    expect(styles).toContain('label {\n  font-size: 13px;')
+    expect(styles).toMatch(/\.topbar p,[\s\S]*?\.empty-callout small \{\s*font-size: 12px;/)
+    expect(styles).toMatch(/\.secondary,[\s\S]*?\.new-year-dialog > \.primary \{\s*font-size: 13px;/)
+    expect(styles).toMatch(/label,[\s\S]*?\.confirmation-check \{\s*font-size: 13px;/)
     expect(styles).toContain('.metric-card h2 {\n  font-size: 16px;')
-    expect(styles).toContain('.field-grid label > span, .entry-dialog label > span, .new-year-dialog > small, .rating-suffix {\n  font-size: 12px;')
+    expect(styles).toMatch(/\.field-grid label > span,[\s\S]*?\.rating-suffix \{\s*font-size: 12px;/)
   })
 
   it('uses the borderless active, muted, hover, and disabled button tokens', () => {
     expect(styles).toContain('--button-active: #26352d;')
     expect(styles).toContain('--button-muted: #e2e4df;')
     expect(styles).toContain('--button-hover: #d5d8d2;')
-    expect(styles).toContain('button, .help-button {\n  border: 0 !important;')
-    expect(styles).toContain('button:not(:disabled):not(.sidebar-scrim):hover, .help-button:hover')
-    expect(styles).toContain('button:active, .help-button:active')
-    expect(styles).toContain('button:disabled {\n  cursor: not-allowed;\n  opacity: .48;')
-    expect(styles).toContain('button:not(:disabled):not(.sidebar-scrim):hover, .help-button:hover')
-    expect(styles).toContain('transition: background-color .16s ease, color .16s ease;')
+    expect(styles).toMatch(/button,\s*\.help-button \{\s*border: 0 !important;/)
+    expect(styles).toMatch(/button:not\(:disabled\):not\(\.sidebar-scrim\):hover,\s*\.help-button:hover/)
+    expect(styles).toMatch(/button:not\(:disabled\):active,\s*\.help-button:active/)
+    expect(styles).toMatch(/button:disabled \{\s*cursor: not-allowed;\s*opacity: 0?\.48;/)
+    expect(styles).toMatch(/transition:\s*background-color 0?\.16s ease,\s*color 0?\.16s ease;/)
     expect(styles).toContain('transform: none !important;')
     expect(styles).toContain('--button-active-text: #fff;')
     expect(styles).toContain('--button-muted-text: #f0f0f0;')
@@ -439,11 +457,14 @@ describe('personal annual report', () => {
     expect(styles).toContain('background: var(--option-surface) !important;')
   })
 
-  it('shows the six-field v3 editor and separates saving from locking', async () => {
+  it('shows the report editor without a subtitle input and separates saving from locking', async () => {
     const wrapper = await mountApp()
     expect(wrapper.get('.edit-button').text()).toBe('Edit report')
     expect(wrapper.get('.lock-button').text()).toBe('Lock report')
     await wrapper.get('.edit-button').trigger('click')
+    expect(wrapper.get('.editor').text()).not.toContain('Subtitle')
+    expect(inputFor(wrapper, 'Report title').element.parentElement?.classList).toContain('wide')
+    expect(wrapper.get('.editor-guidance').text()).toBe("These default entries are used for chart comparisons and cannot be deleted. You can add custom entries, but they won't appear in the chart.")
 
     expect(wrapper.findAll('.entry-launcher').map((button) => button.text())).toEqual([
       expect.stringContaining("Add books you've read"),
@@ -451,12 +472,11 @@ describe('personal annual report', () => {
     ])
     expect(wrapper.findAll('label').some((label) => label.text() === 'Books read')).toBe(false)
     expect(wrapper.findAll('label').some((label) => label.text() === 'Places visited')).toBe(false)
-    expect(wrapper.get('.year-display').attributes('aria-label')).toBe('Report year, locked')
-    expect(wrapper.get('.year-display').text()).toContain('2025')
+    expect(wrapper.get('nav button[aria-current="page"]').text()).toContain('2025')
     expect(wrapper.find('.editor input[type="number"][min="1900"]').exists()).toBe(false)
     expect(inputFor(wrapper, 'Average steps per day').attributes('required')).toBeDefined()
     expect(inputFor(wrapper, 'Albums listened').attributes('required')).toBeDefined()
-    expect(inputFor(wrapper, 'Average daily sleep').attributes('required')).toBeDefined()
+    expect(inputFor(wrapper, 'Average sleep').attributes('required')).toBeDefined()
     expect(inputFor(wrapper, 'Daily exercise').attributes('required')).toBeDefined()
     expect(wrapper.text()).not.toContain('Coding activity')
     expect(wrapper.text()).not.toContain('Photos taken')
@@ -491,7 +511,8 @@ describe('personal annual report', () => {
     expect(rating.getAttribute('aria-describedby')).toBe(suffix.id)
     expect(suffix.textContent).toBe('out of 10')
     expect(styles).toContain('.rating-input {\n  padding-right: 72px;')
-    expect(styles).toContain('.rating-input::-webkit-inner-spin-button, .rating-input::-webkit-outer-spin-button')
+    expect(styles).toContain('.rating-input::-webkit-inner-spin-button')
+    expect(styles).toContain('.rating-input::-webkit-outer-spin-button')
 
     expect(styles).toContain('-webkit-appearance: none;')
     expect(styles).toContain('appearance: none;')
@@ -505,7 +526,7 @@ describe('personal annual report', () => {
     expect(document.querySelector('.rating-suffix')).toBeNull()
     expect(rating.hasAttribute('aria-describedby')).toBe(false)
     expect(rating.classList.contains('empty')).toBe(false)
-    expect(styles).toContain('.rating-input {\n  padding-right: 12px;\n}\n\n.rating-input.empty {\n  padding-right: 72px;')
+    expect(styles).toMatch(/\.rating-input \{\s*padding-right: 12px;\s*}\s*\.rating-input\.empty \{\s*padding-right: 72px;/)
 
     rating.value = ''
     rating.dispatchEvent(new Event('input', { bubbles: true }))
@@ -566,13 +587,12 @@ describe('personal annual report', () => {
     deletion.click()
     await flushPromises()
     expect(document.querySelectorAll('.entry-dialog .place-row')).toHaveLength(0)
-    expect(styles).toContain('.delete-entry {\n  grid-column: 2 / -1;\n  justify-self: start;\n  margin-top: 4px;\n  padding: 7px 10px;')
-    expect(styles).toContain('.delete-entry:hover, .delete-entry:focus, .delete-entry:active {\n  color: #b43f31 !important;\n  background: transparent !important;')
-    expect(styles).toContain('.delete-entry {\n  min-height: 44px;\n  padding: 10px 12px;')
-    expect(styles).toContain('@media (max-width: 850px) {\n  .entry-dialog .entry-row, .entry-dialog .place-row {\n    grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr);')
-    expect(styles).toContain('.entry-dialog .delete-entry {\n    grid-column: 2 / -1;\n    width: 100%;\n    justify-self: stretch;\n    text-align: left;')
-    expect(styles).toContain('@media (max-width: 560px) {\n  .entry-dialog .entry-row, .entry-dialog .place-row {\n    grid-template-columns: 24px minmax(0, 1fr);')
-    expect(styles).toContain('.entry-dialog .entry-row label, .entry-dialog .entry-row .country-field {\n    grid-column: 2;')
+    expect(styles).toMatch(/\.delete-entry \{\s*grid-column: 2 \/ -1;[\s\S]*?margin-top: 4px;/)
+    expect(styles).toMatch(/\.delete-entry:hover,\s*\.delete-entry:focus,\s*\.delete-entry:active \{\s*color: #b43f31 !important;\s*background: transparent !important;/)
+    expect(styles).toMatch(/@media \(max-width: 850px\)[\s\S]*?grid-template-columns: 28px minmax\(0, 1fr\) minmax\(0, 1fr\);/)
+    expect(styles).toMatch(/\.entry-dialog \.delete-entry \{\s*grid-column: 2 \/ -1;\s*width: 100%;\s*justify-self: stretch;\s*text-align: left;/)
+    expect(styles).toMatch(/@media \(max-width: 560px\)[\s\S]*?grid-template-columns: 24px minmax\(0, 1fr\);/)
+    expect(styles).toMatch(/\.entry-dialog \.entry-row label,[\s\S]*?\.entry-dialog \.entry-row \.country-field \{\s*grid-column: 2;/)
     clickDialogButton('Cancel')
     await flushPromises()
   })
@@ -644,27 +664,38 @@ describe('personal annual report', () => {
     expect(wrapper.find('.editor').exists()).toBe(false)
   })
 
-  it('uses a safe browser fallback for the final saved-report view', async () => {
+  it('downloads a .memolock file and confirms export after a browser lock', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2025: { ...createBlankReport(2025), stepsPerDay: 4321 },
+    }))
     const wrapper = await mountApp()
     await wrapper.get('.lock-button').trigger('click')
+    expect(wrapper.get('.lock-panel').text()).toContain('FINALIZE 2025 FOREVER')
+    expect(wrapper.get('.lock-panel').text()).toContain('cannot be edited or unlocked later')
+    expect(wrapper.get('.lock-panel').text()).not.toContain('Unlock date')
+    expect(wrapper.get('.lock-panel').text()).not.toContain('Next year')
+    expect(styles).toMatch(/\.confirmation-check \{[\s\S]*?width: fit-content;[\s\S]*?margin-inline: auto;[\s\S]*?justify-content: center;/)
     await wrapper.get('.confirmation-check input').setValue(true)
     await wrapper.get('#lock-form').trigger('submit')
     await flushPromises()
 
-    expect(JSON.parse(localStorage.getItem(lockKey) ?? '{}')).toMatchObject({ year: 2025 })
+    expect(JSON.parse(localStorage.getItem(lockKey) ?? '{}')).toMatchObject({
+      2025: { year: 2025 },
+    })
     expect(localStorage.getItem(draftKey)).toBeNull()
-    expect(open.mock.calls[0]).toEqual([
-      expect.stringMatching(/[?&]report=saved.*[?&]year=2025|[?&]year=2025.*[?&]report=saved/),
-      '_blank',
-      'noopener,noreferrer',
-    ])
+    expect(open).not.toHaveBeenCalled()
+    expect(document.querySelector('.export-dialog')?.textContent).toContain('2025 report exported')
+    expect(document.querySelector('.export-dialog')?.textContent).toContain('2025_report.memolock')
   })
 
   it('never calls window.open after a native final lock, avoiding NL_TOKEN errors', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => {
       throw new Error('NL_TOKEN is missing')
     })
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2025: { ...createBlankReport(2025), albumsListened: 12 },
+    }))
     const wrapper = await mountApp()
     window.NL_PATH = 'C:\\Portable\\YearInData'
     window.NL_OS = 'Windows'
@@ -675,22 +706,429 @@ describe('personal annual report', () => {
     await flushPromises()
 
     expect(open).not.toHaveBeenCalled()
-    expect(nativeApi.filesystem.writeFile).toHaveBeenCalledOnce()
-    const written = nativeApi.filesystem.writeFile.mock.calls[0][1]
-    expect(JSON.parse(written)).toMatchObject({ lock: { year: 2025 }, version: 3 })
-    expect(wrapper.text()).toContain('Locked until')
+    expect(nativeApi.filesystem.writeFile).toHaveBeenCalledTimes(2)
+    const storedArchive = JSON.parse(nativeApi.filesystem.writeFile.mock.calls[0][1])
+    const exportedReport = JSON.parse(nativeApi.filesystem.writeFile.mock.calls[1][1])
+    expect(storedArchive).toMatchObject({ locks: { 2025: { year: 2025 } }, version: 5 })
+    expect(nativeApi.os.getEnv).toHaveBeenCalledWith('USERPROFILE')
+    expect(nativeApi.filesystem.writeFile.mock.calls[1][0]).toBe('C:\\Users\\Ada\\Documents\\Memolock\\2025_report.memolock')
+    expect(exportedReport).toMatchObject({
+      format: 'memolock-report',
+      formatVersion: 1,
+      status: { code: 'LOCKED', locked: true },
+      report: { year: 2025, albumsListened: 12 },
+    })
+    expect(document.querySelector('.export-dialog')?.textContent).toContain('Exported to Documents\\Memolock\\2025_report.memolock.')
+    expect(wrapper.text()).toContain('Locked permanently')
+    expect(wrapper.find('.export-report-button').exists()).toBe(true)
+
+    expect(document.querySelector('.export-dialog')?.textContent).not.toContain('Done')
+    document.querySelector<HTMLElement>('.export-dialog')!.parentElement!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await wrapper.get('.export-report-button').trigger('click')
+    await flushPromises()
+    expect(nativeApi.filesystem.writeFile).toHaveBeenCalledTimes(3)
+    expect(nativeApi.filesystem.writeFile.mock.calls[2][0]).toBe('C:\\Users\\Ada\\Documents\\Memolock\\2025_report.memolock')
+    expect(document.querySelector('.export-dialog')?.textContent).toContain('2025 report exported')
   })
 
-  it('uses the rc1 version consistently in the About panel and manifests', async () => {
+  it('keeps a legacy year lock permanent while the newly completed year remains editable', async () => {
+    vi.setSystemTime(new Date('2027-07-23T10:00:00Z'))
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2025: { ...createBlankReport(2025), stepsPerDay: 5000 },
+    }))
+    localStorage.setItem(lockKey, JSON.stringify({
+      year: 2025,
+      lockedAt: '2025-12-31T23:59:00.000Z',
+      unlockAt: '2026-01-01T00:00:00.000Z',
+    }))
+
+    const wrapper = await mountApp('', false)
+    expect(wrapper.get('.lock-status').text()).toBe('Locked permanently')
+    expect(wrapper.find('.edit-button').exists()).toBe(false)
+    expect(wrapper.get('.add-more-card').attributes('disabled')).toBeDefined()
+
+    document.querySelector<HTMLButtonElement>('.new-year-dialog .primary')!.click()
+    await flushPromises()
+    expect(wrapper.get('.editor').text()).toContain('What did you accomplish in 2026?')
+    await wrapper.get('button[aria-label="Close form"]').trigger('click')
+    expect(wrapper.get('.edit-button').text()).toBe('Edit report')
+    expect(wrapper.get('.add-more-card').attributes('disabled')).toBeUndefined()
+
+    await wrapper.findAll('nav button').find((button) => button.text().includes('2025'))!.trigger('click')
+    expect(wrapper.get('.lock-status').text()).toBe('Locked permanently')
+    expect(JSON.parse(localStorage.getItem(lockKey) ?? '{}')).toMatchObject({
+      2025: { year: 2025, lockedAt: '2025-12-31T23:59:00.000Z' },
+    })
+  })
+
+  it('chooses, validates, and persists a text custom entry while close discards input', async () => {
     const wrapper = await mountApp()
-    await wrapper.get('.settings-button').trigger('click')
-    expect(wrapper.get('.settings-panel').text()).toContain('version 0.1-rc1')
+    document.body.appendChild(wrapper.element)
+    const launcher = wrapper.get<HTMLButtonElement>('.add-more-card')
+    expect(launcher.classes()).toContain('metric-card')
+    expect(launcher.text()).toContain('Add more entries')
+    expect(launcher.attributes()).toMatchObject({
+      'aria-haspopup': 'dialog',
+      'aria-controls': 'custom-entry-flow',
+      'aria-expanded': 'false',
+    })
+
+    await launcher.trigger('click')
+    let chooser = document.querySelector<HTMLElement>('#custom-entry-chooser')!
+    expect(chooser.getAttribute('role')).toBe('dialog')
+    expect(chooser.getAttribute('aria-modal')).toBe('true')
+    expect(chooser.getAttribute('aria-labelledby')).toBe('custom-entry-chooser-title')
+    const choices = [...chooser.querySelectorAll<HTMLButtonElement>('.custom-entry-choice')]
+    expect(choices.map((choice) => choice.querySelector('strong')?.textContent)).toEqual([
+      'Title with textbox',
+      'Title with number',
+    ])
+    expect(document.activeElement).toBe(choices[0])
+
+    choices[0].click()
+    await flushPromises()
+    let dialog = document.querySelector<HTMLElement>('.custom-entry-dialog')!
+    let title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    let content = dialog.querySelector<HTMLTextAreaElement>('#custom-entry-content')!
+    expect(dialog.textContent).toContain('Title with textbox')
+    expect(document.activeElement).toBe(title)
+
+    ;[...dialog.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.includes('Back'))!.click()
+    await flushPromises()
+    chooser = document.querySelector<HTMLElement>('#custom-entry-chooser')!
+    expect(document.activeElement).toBe(chooser.querySelector('[data-custom-entry-choice="text"]'))
+    chooser.querySelector<HTMLButtonElement>('[data-custom-entry-choice="text"]')!.click()
+    await flushPromises()
+    dialog = document.querySelector<HTMLElement>('.custom-entry-dialog')!
+    title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    content = dialog.querySelector<HTMLTextAreaElement>('#custom-entry-content')!
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('Enter a title')
+    expect(title.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(title)
+    title.value = 'Garden'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    content.value = 'Grew twelve tomatoes.'
+    content.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector<HTMLButtonElement>('button[aria-label="Close custom entry form"]')!.click()
+    await flushPromises()
+    expect(wrapper.find('.custom-entry-card').exists()).toBe(false)
+    expect(document.activeElement).toBe(launcher.element)
+
+    await launcher.trigger('click')
+    document.querySelector<HTMLButtonElement>('[data-custom-entry-choice="text"]')!.click()
+    await flushPromises()
+    dialog = document.querySelector<HTMLElement>('.custom-entry-dialog')!
+    title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    content = dialog.querySelector<HTMLTextAreaElement>('#custom-entry-content')!
+    title.value = 'Garden'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    content.value = 'Grew twelve tomatoes.'
+    content.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    expect(wrapper.get('.custom-entry-card').text()).toContain('Garden')
+    expect(wrapper.get('.custom-entry-card').text()).toContain('Grew twelve tomatoes.')
+    expect(JSON.parse(localStorage.getItem(archiveKey) ?? '{}')['2025'].customEntries).toEqual([
+      expect.objectContaining({ type: 'text', title: 'Garden', content: 'Grew twelve tomatoes.' }),
+    ])
+
+    const editButton = wrapper.get<HTMLButtonElement>('.edit-custom-entry')
+    expect(editButton.attributes('aria-label')).toBe('Edit Garden')
+    await editButton.trigger('click')
+    dialog = document.querySelector<HTMLElement>('.custom-entry-dialog')!
+    expect(dialog.textContent).toContain('Edit text entry')
+    expect(dialog.textContent).toContain('Save changes')
+    title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    content = dialog.querySelector<HTMLTextAreaElement>('#custom-entry-content')!
+    expect(title.value).toBe('Garden')
+    expect(content.value).toBe('Grew twelve tomatoes.')
+    title.value = 'Balcony garden'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    content.value = 'Grew fourteen tomatoes.'
+    content.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(wrapper.get('.custom-entry-card').text()).toContain('Balcony garden')
+    expect(wrapper.get('.custom-entry-card').text()).toContain('Grew fourteen tomatoes.')
+    expect(JSON.parse(localStorage.getItem(archiveKey) ?? '{}')['2025'].customEntries).toHaveLength(1)
+    expect(styles).not.toMatch(/border-top:\s*(4px|5px)\s+solid/)
+
+    wrapper.unmount()
+    const restored = await mountApp()
+    expect(restored.get('.custom-entry-card').text()).toContain('Balcony garden')
+  })
+
+  it('validates and persists zero, decimal, and negative number custom entries as numbers', async () => {
+    const wrapper = await mountApp()
+    document.body.appendChild(wrapper.element)
+    const launcher = wrapper.get<HTMLButtonElement>('.add-more-card')
+
+    async function openNumberForm() {
+      await launcher.trigger('click')
+      document.querySelector<HTMLButtonElement>('[data-custom-entry-choice="number"]')!.click()
+      await flushPromises()
+      return document.querySelector<HTMLElement>('.custom-entry-dialog')!
+    }
+
+    let dialog = await openNumberForm()
+    let title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    let value = dialog.querySelector<HTMLInputElement>('#custom-entry-value')!
+    expect(dialog.textContent).toContain('Title with number')
+    expect(value.type).toBe('number')
+    expect(value.step).toBe('any')
+
+    title.value = 'Net change'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('valid number')
+    expect(value.getAttribute('aria-invalid')).toBe('true')
+    expect(document.activeElement).toBe(value)
+
+    value.value = '0'
+    value.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(document.activeElement).toBe(launcher.element)
+
+    dialog = await openNumberForm()
+    title = dialog.querySelector<HTMLInputElement>('#custom-entry-title')!
+    value = dialog.querySelector<HTMLInputElement>('#custom-entry-value')!
+    title.value = 'Temperature delta'
+    title.dispatchEvent(new Event('input', { bubbles: true }))
+    value.value = '-12.5'
+    value.dispatchEvent(new Event('input', { bubbles: true }))
+    dialog.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    const stored = JSON.parse(localStorage.getItem(archiveKey) ?? '{}')['2025'].customEntries
+    expect(stored).toEqual([
+      expect.objectContaining({ type: 'number', title: 'Net change', value: 0 }),
+      expect.objectContaining({ type: 'number', title: 'Temperature delta', value: -12.5 }),
+    ])
+    expect(stored.every((entry: { value: unknown }) => typeof entry.value === 'number')).toBe(true)
+    expect(wrapper.findAll('.custom-number-card').map((card) => card.text())).toEqual([
+      expect.stringContaining('0'),
+      expect.stringContaining('-12.5'),
+    ])
+    expect(wrapper.findAll('.custom-number-card')[0].attributes('aria-label')).toBe('Net change: 0')
+
+    wrapper.unmount()
+    const restored = await mountApp()
+    expect(restored.findAll('.custom-number-card')).toHaveLength(2)
+  })
+
+  it('switches to an offline comparison view with built-in metrics, scaled axes, and custom summaries', async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2023: {
+        ...createBlankReport(2023),
+        title: 'Earlier report',
+        albumsListened: 1,
+        customEntries: [{ id: 'text-2023', type: 'text', title: 'Lesson', content: 'Started slowly.' }],
+      },
+      2024: {
+        ...createBlankReport(2024),
+        title: 'Middle report',
+        stepsPerDay: 10000,
+        customEntries: [{ id: 'number-2024', type: 'number', title: 'Side projects', value: 3 }],
+      },
+      2025: {
+        ...createBlankReport(2025),
+        title: 'Latest report',
+        stepsPerDay: 20000,
+        customEntries: [{ id: 'text-2025', type: 'text', title: 'Theme', content: 'Kept building.' }],
+      },
+    }))
+    const wrapper = await mountApp()
+    document.body.appendChild(wrapper.element)
+    const chartButton = wrapper.get<HTMLButtonElement>('.chart-button')
+    const viewNav = wrapper.get('.view-nav')
+    expect(viewNav.attributes('aria-label')).toBe('Report views')
+    expect(viewNav.get('.chart-button').element).toBe(chartButton.element)
+    expect(viewNav.element.nextElementSibling).toBe(wrapper.get('.sidebar > .settings-button').element)
+
+    await chartButton.trigger('click')
+    await flushPromises()
+    const comparison = wrapper.get('.comparison-view')
+    expect(wrapper.find('.overlay').exists()).toBe(false)
+    expect(comparison.find('[role="dialog"]').exists()).toBe(false)
+    expect(chartButton.attributes('aria-current')).toBe('page')
+    expect(chartButton.classes()).toContain('active')
+    expect(document.activeElement).toBe(wrapper.get('.comparison-heading').element)
+
+    const select = comparison.get<HTMLSelectElement>('#comparison-metric')
+    expect(select.element.value).toBe('')
+    const options = select.findAll('option')
+    expect(options[0].text()).toBe('Choose a metric')
+    expect(options.slice(1).map((option) => [option.attributes('value'), option.text()])).toEqual([
+      ['books', 'Books read'],
+      ['places', 'Places visited'],
+      ['stepsPerDay', 'Steps per day'],
+      ['albumsListened', 'Albums listened'],
+      ['averageDailySleepHours', 'Average sleep (hours)'],
+      ['dailyExerciseHours', 'Daily exercise (hours)'],
+    ])
+    expect(options.map((option) => option.text()).join(' ')).not.toMatch(/Lesson|Side projects|Theme/)
+    expect(comparison.find('svg').exists()).toBe(false)
+    expect(comparison.find('.chart-table').exists()).toBe(false)
+    expect(comparison.get('.comparison-chart-section').text()).toContain('Choose a metric')
+
+    await select.setValue('stepsPerDay')
+    await flushPromises()
+    const svg = comparison.get('svg[role="img"]')
+    expect(svg.get('title').text()).toBe('Steps per day by year')
+    expect(svg.findAll('.chart-tick').map((tick) => tick.text())).toEqual(['0', '10,000', '20,000'])
+    expect(svg.findAll('.chart-grid-line')).toHaveLength(3)
+    expect(svg.get('.chart-axis-label').text()).toBe('Steps per day')
+
+    const rows = comparison.findAll('.chart-table tbody tr')
+    expect(rows.map((row) => row.text().replace(/\s/g, ''))).toEqual([
+      '20230',
+      '202410,000',
+      '202520,000',
+    ])
+
+    const summaries = comparison.findAll('.custom-summary-year')
+    expect(summaries.map((summary) => summary.get('h3').text())).toEqual(['2025', '2024', '2023'])
+    expect(comparison.get('.custom-summary').text()).toContain('Theme')
+    expect(comparison.get('.custom-summary').text()).toContain('Kept building.')
+    expect(comparison.get('.custom-summary').text()).toContain('Side projects')
+    expect(comparison.get('.custom-summary').text()).toContain('3')
+    expect(comparison.get('.custom-summary').text()).toContain('Lesson')
+
+    await wrapper.get('.sidebar > .settings-button').trigger('click')
+    await wrapper.get('button[aria-label="Close settings"]').trigger('click')
+    expect(wrapper.find('.comparison-view').exists()).toBe(true)
+    expect(wrapper.get<HTMLSelectElement>('#comparison-metric').element.value).toBe('stepsPerDay')
+
+    await wrapper.findAll('nav button').find((button) => button.text().includes('2024'))!.trigger('click')
+    expect(wrapper.find('.comparison-view').exists()).toBe(false)
+    expect(wrapper.get('.topbar').text()).toContain('Middle report')
+    expect(chartButton.attributes('aria-current')).toBeUndefined()
+
+    await chartButton.trigger('click')
+    await flushPromises()
+    expect(wrapper.get<HTMLSelectElement>('#comparison-metric').element.value).toBe('')
+    expect(wrapper.find('.comparison-view svg').exists()).toBe(false)
+    await wrapper.get('#comparison-metric').setValue('books')
+    expect(wrapper.get('.comparison-chart-section').text()).toContain('no recorded values')
+    expect(wrapper.find('.comparison-view svg').exists()).toBe(false)
+    expect(wrapper.find('.comparison-view .chart-table').exists()).toBe(false)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('places import above compare years and processes a locked .memolock file', async () => {
+    const wrapper = await mountApp()
+    const viewButtons = wrapper.get('.view-nav').findAll('button')
+    expect(viewButtons.map((button) => button.text())).toEqual(['⇩ Import report', '▥ Compare years'])
+
+    window.NL_PATH = 'C:\\Portable\\Memolock'
+    window.NL_OS = 'Windows'
+    nativeApi.os.showOpenDialog.mockResolvedValue(['C:\\Backup\\2024_report.memolock'])
+    nativeApi.filesystem.readFile.mockResolvedValue(JSON.stringify({
+      format: 'memolock-report',
+      formatVersion: 1,
+      exportedAt: '2026-01-02T00:00:00.000Z',
+      status: { code: 'LOCKED', locked: true, lockedAt: '2025-01-01T00:00:00.000Z' },
+      report: { ...createBlankReport(2024), title: 'Imported year', stepsPerDay: 6789 },
+    }))
+
+    await wrapper.get('.import-button').trigger('click')
+    expect(document.querySelector('.import-dialog')?.textContent).toContain('Select or drag and drop')
+    expect(document.querySelector('.import-dialog')?.textContent).not.toContain('Cancel')
+    const selectButton = [...document.querySelectorAll<HTMLButtonElement>('.import-dialog button')]
+      .find((button) => button.textContent?.includes('Select .memolock file'))!
+    selectButton.click()
+    await flushPromises()
+
+    expect(nativeApi.os.showOpenDialog).toHaveBeenCalledWith('Import a Memolock report', {
+      filters: [{ name: 'Memolock reports', extensions: ['memolock'] }],
+      multiSelections: false,
+    })
+    expect(document.querySelector('.import-result')?.textContent).toContain('2024 report imported')
+    expect(document.querySelector('.import-result')?.textContent).toContain('Status code: LOCKED')
+    expect(wrapper.get('.topbar').text()).toContain('Imported year')
+    expect(wrapper.get('.topbar').text()).toContain('Locked permanently')
+  })
+
+  it('processes a dropped unlocked .memolock file', async () => {
+    const wrapper = await mountApp()
+    await wrapper.get('.import-button').trigger('click')
+    const contents = JSON.stringify({
+      format: 'memolock-report',
+      formatVersion: 1,
+      exportedAt: '2026-01-02T00:00:00.000Z',
+      status: { code: 'UNLOCKED', locked: false, lockedAt: null },
+      report: { ...createBlankReport(2024), title: 'Dropped year', albumsListened: 42 },
+    })
+    const file = { name: '2024_report.memolock', text: vi.fn().mockResolvedValue(contents) }
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: { files: [file] } })
+    document.querySelector<HTMLElement>('.import-dropzone')!.dispatchEvent(event)
+    await flushPromises()
+
+    expect(file.text).toHaveBeenCalledOnce()
+    expect(document.querySelector('.import-result')?.textContent).toContain('Status code: UNLOCKED')
+    expect(wrapper.get('.topbar').text()).toContain('Dropped year')
+    expect(wrapper.get('.topbar').text()).toContain('Read-only archive')
+  })
+
+  it('never lets import replace an already permanently locked year', async () => {
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2025: { ...createBlankReport(2025), title: 'Original locked year', stepsPerDay: 5000 },
+    }))
+    localStorage.setItem(lockKey, JSON.stringify({
+      2025: { year: 2025, lockedAt: '2026-01-01T00:00:00.000Z' },
+    }))
+    const wrapper = await mountApp()
+    window.NL_PATH = 'C:\\Portable\\Memolock'
+    window.NL_OS = 'Windows'
+    nativeApi.os.showOpenDialog.mockResolvedValue(['C:\\Backup\\2025_report.memolock'])
+    nativeApi.filesystem.readFile.mockResolvedValue(JSON.stringify({
+      format: 'memolock-report',
+      formatVersion: 1,
+      exportedAt: '2026-01-02T00:00:00.000Z',
+      status: { code: 'UNLOCKED', locked: false, lockedAt: null },
+      report: { ...createBlankReport(2025), title: 'Replacement attempt', stepsPerDay: 9999 },
+    }))
+
+    await wrapper.get('.import-button').trigger('click')
+    const selectButton = [...document.querySelectorAll<HTMLButtonElement>('.import-dialog button')]
+      .find((button) => button.textContent?.includes('Select .memolock file'))!
+    selectButton.click()
+    await flushPromises()
+
+    expect(document.querySelector('.import-result')?.textContent).toContain('already permanently locked and cannot be replaced')
+    expect(wrapper.get('.topbar').text()).toContain('Original locked year')
+    expect(wrapper.get('.topbar').text()).not.toContain('Replacement attempt')
+  })
+
+  it('uses public 0.1 branding and stable 0.1.0 Windows metadata consistently', async () => {
+    const wrapper = await mountApp()
+    await wrapper.get('.sidebar > .settings-button').trigger('click')
+    expect(wrapper.get('.settings-panel').text()).toContain('version 0.1')
+    expect(wrapper.get('.sidebar').text()).toContain('Memolock 0.1')
     expect(packageManifest.name).toBe('memolock')
-    expect(packageManifest.version).toBe('0.1.0-rc.2')
-    expect(neutralinoConfig.version).toBe('0.1.0-rc.2')
+    expect(packageManifest.version).toBe('0.1.0')
+    expect(packageLock.name).toBe('memolock')
+    expect(packageLock.version).toBe('0.1.0')
+    expect(packageLock.packages['']).toMatchObject({ name: 'memolock', version: '0.1.0' })
+    expect(neutralinoConfig.version).toBe('0.1.0')
+    expect(neutralinoConfig.applicationName).toBe('Memolock')
+    expect(neutralinoConfig.description).toBe('Memolock')
+    expect(neutralinoConfig.author).toBe('adamngshrine')
+    expect(neutralinoConfig.copyright).toBe('Copyright (c) 2026 adamngshrine. All rights reserved.')
     expect(neutralinoConfig.modes.window.title).toBe('Memolock')
     expect(neutralinoConfig.cli.binaryName).toBe('memolock')
     expect(indexHtml).toContain('<title>Memolock</title>')
     expect(neutralinoConfig.applicationId).toBe('js.yearindata.app')
+    expect(readme).toContain('The current release is `0.1`.')
+    expect([wrapper.text(), packageManifest.version, neutralinoConfig.version, readme].join('\n')).not.toMatch(/0\.1-rc1|0\.1\.0-rc\.2/i)
   })
 })

@@ -19,7 +19,8 @@ provided without a warranty.
 - Daily steps, albums listened, sleep, and exercise statistics
 - Light, dark, and true-black OLED themes with 30 accent colors
 - Local JSON storage
-- Permanent annual locking until the next year
+- Permanent annual locking
+- Portable `.memolock` report export and import
 - Portable Windows executable
 
 ## Local data
@@ -32,6 +33,19 @@ data/annual-report.json
 ```
 
 Back up this file before moving, replacing, or deleting the application.
+
+## Memolock report files
+
+Locking a report creates a readable JSON file in:
+
+```text
+Documents\Memolock\2025_report.memolock
+```
+
+Each file contains one annual report plus an explicit `LOCKED` or `UNLOCKED`
+status code and lock timestamp. Import accepts `.memolock` files through the
+native picker or drag and drop. An existing permanently locked year cannot be
+replaced by an import.
 
 ## Technology
 
@@ -71,7 +85,7 @@ npm run native:portable
 
 ## Release
 
-The current release is `0.1-rc1`. The portable archive contains
+The current release is `0.1`. The portable archive contains
 `memolock-win_x64.exe` at its root. Memolock is currently not digitally code signed. Because of this, Windows Defender SmartScreen may display an "unrecognized app" warning the first time you run it.
 
 ## Project agents

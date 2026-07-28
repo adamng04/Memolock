@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+/// <reference path="./env.d.ts" />
+
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import seedReport from './data/annual-report.json'
 import { loadStoredData, saveStoredData, type StoredData } from './storage'
@@ -48,9 +50,9 @@ function installNativeFilesystem() {
 describe('portable report storage', () => {
   it('loads the JSON archive beside the portable executable data directory', async () => {
     const stored: StoredData = {
-      version: 3,
+      version: 5,
       archive: { 2024: { ...seedReport, year: 2024, title: 'Native archive' } },
-      lock: null,
+      locks: {},
       settings: { theme: 'dark', accent: 'navy' },
     }
     const filesystem = installNativeFilesystem()
@@ -68,9 +70,9 @@ describe('portable report storage', () => {
   it('creates the portable data directory and writes formatted local JSON', async () => {
     const filesystem = installNativeFilesystem()
     const data: StoredData = {
-      version: 3,
+      version: 5,
       archive: { [seedReport.year]: seedReport },
-      lock: null,
+      locks: {},
       draft: { ...seedReport, books: 30 },
       settings: { theme: 'dark', accent: 'navy' },
     }
@@ -91,9 +93,9 @@ describe('portable report storage', () => {
     const result = await loadStoredData(seedReport)
 
     expect(result).toEqual({
-      version: 3,
+      version: 5,
       archive: { [seedReport.year]: seedReport },
-      lock: null,
+      locks: {},
       settings: { theme: 'dark', accent: 'leaf' },
       migrations: { demo2025Reset: true },
       migrationPending: true,
@@ -131,7 +133,7 @@ describe('portable report storage', () => {
 
     const result = await loadStoredData(seedReport)
 
-    expect(result.version).toBe(3)
+    expect(result.version).toBe(5)
     expect(result.settings).toEqual({ theme: 'dark', accent: 'leaf' })
     expect(result.archive[2024]).toMatchObject({
       books: 1,
@@ -182,7 +184,7 @@ describe('portable report storage', () => {
     expect(result.archive[2025]).toEqual(createBlankReport(2025))
     expect(result.archive[2024].stepsPerDay).toBe(123)
     expect(result.settings).toEqual({ theme: 'dark', accent: 'berry' })
-    expect(result.lock).toEqual(lock)
+    expect(result.locks[2024]).toEqual({ year: 2024, lockedAt: lock.lockedAt })
     expect(result.draft).toMatchObject({ year: 2026, highlight: 'Still writing' })
     expect(result.migrations).toEqual({ demo2025Reset: true })
     expect(result.migrationPending).toBe(true)
@@ -234,6 +236,72 @@ describe('portable report storage', () => {
     const result = await loadStoredData(seedReport)
 
     expect(result.archive[2024].bookEntries.map((book) => book.rating)).toEqual([0, 5, 10, 10])
+  })
+
+  it('migrates an expired legacy lock into a permanent year-keyed lock', async () => {
+    const filesystem = installNativeFilesystem()
+    filesystem.readFile.mockResolvedValue(JSON.stringify({
+      version: 3,
+      archive: { 2024: { ...createBlankReport(2024), stepsPerDay: 100 } },
+      lock: {
+        year: 2024,
+        lockedAt: '2024-12-31T23:59:00.000Z',
+        unlockAt: '2025-01-01T00:00:00.000Z',
+      },
+      settings: { theme: 'dark', accent: 'leaf' },
+      migrations: { demo2025Reset: true },
+    }))
+
+    const result = await loadStoredData(seedReport)
+
+    expect(result.locks).toEqual({
+      2024: { year: 2024, lockedAt: '2024-12-31T23:59:00.000Z' },
+    })
+    expect(result.locks[2024]).not.toHaveProperty('unlockAt')
+    expect(result.migrationPending).toBe(true)
+  })
+
+  it('migrates v4 text cards and safely normalizes both v5 custom entry kinds', async () => {
+    const filesystem = installNativeFilesystem()
+    filesystem.readFile.mockResolvedValue(JSON.stringify({
+      version: 4,
+      archive: {
+        2024: { ...createBlankReport(2024), customEntries: undefined },
+        2025: {
+          ...createBlankReport(2025),
+          customEntries: [
+            { id: 'legacy-text', title: 'Garden', content: 'Grew twelve tomatoes.' },
+            { id: 'number-zero', type: 'number', title: 'Net change', value: 0 },
+            { id: 'number-decimal', type: 'number', title: 'Temperature', value: -12.5 },
+            { id: 'invalid-number', type: 'number', title: 'Fallback', value: 'not-a-number' },
+            { id: 'unknown-kind', type: 'other', title: 'Safe text', content: 'Preserved' },
+          ],
+        },
+      },
+      locks: {},
+      draft: {
+        ...createBlankReport(2025),
+        customEntries: [{ id: 'draft-number', type: 'number', title: 'Draft', value: 3.25 }],
+      },
+      settings: { theme: 'dark', accent: 'leaf' },
+      migrations: { demo2025Reset: true },
+    }))
+
+    const result = await loadStoredData(seedReport)
+
+    expect(result.archive[2024].customEntries).toEqual([])
+    expect(result.archive[2025].customEntries).toEqual([
+      { id: 'legacy-text', type: 'text', title: 'Garden', content: 'Grew twelve tomatoes.' },
+      { id: 'number-zero', type: 'number', title: 'Net change', value: 0 },
+      { id: 'number-decimal', type: 'number', title: 'Temperature', value: -12.5 },
+      { id: 'invalid-number', type: 'number', title: 'Fallback', value: 0 },
+      { id: 'unknown-kind', type: 'text', title: 'Safe text', content: 'Preserved' },
+    ])
+    expect(result.draft?.customEntries).toEqual([
+      { id: 'draft-number', type: 'number', title: 'Draft', value: 3.25 },
+    ])
+    expect(result.version).toBe(5)
+    expect(result.migrationPending).toBe(true)
   })
 
   it('preserves OLED and legacy light themes while invalid or missing themes default dark', async () => {

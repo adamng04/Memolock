@@ -1,8 +1,10 @@
 {
   "applicationId": "js.yearindata.app",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "applicationName": "Memolock",
+  "author": "adamngshrine",
   "description": "Memolock",
+  "copyright": "Copyright (c) 2026 adamngshrine. All rights reserved.",
   "defaultMode": "window",
   "port": 0,
   "documentRoot": "/web-dist/",
@@ -17,7 +19,9 @@
     "filesystem.readFile",
     "filesystem.writeFile",
     "filesystem.getStats",
-    "os.open"
+    "os.open",
+    "os.getEnv",
+    "os.showOpenDialog"
   ],
   "modes": {
     "window": {

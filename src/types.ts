@@ -14,6 +14,22 @@ export interface PlaceEntry {
   visitedDate?: string
 }
 
+export interface CustomTextEntry {
+  id: string
+  type: 'text'
+  title: string
+  content: string
+}
+
+export interface CustomNumberEntry {
+  id: string
+  type: 'number'
+  title: string
+  value: number
+}
+
+export type CustomEntry = CustomTextEntry | CustomNumberEntry
+
 export interface AnnualReport {
   year: number
   title: string
@@ -27,6 +43,7 @@ export interface AnnualReport {
   highlight: string
   bookEntries: BookEntry[]
   placeEntries: PlaceEntry[]
+  customEntries: CustomEntry[]
 }
 
 export type ReportArchive = Record<number, AnnualReport>
@@ -34,8 +51,10 @@ export type ReportArchive = Record<number, AnnualReport>
 export interface ReportLock {
   year: number
   lockedAt: string
-  unlockAt: string
+  unlockAt?: string
 }
+
+export type ReportLocks = Record<number, ReportLock>
 
 export interface AppSettings {
   theme: 'light' | 'dark' | 'oled'
@@ -66,6 +85,7 @@ export function createBlankReport(year: number): AnnualReport {
     highlight: '',
     bookEntries: [],
     placeEntries: [],
+    customEntries: [],
   }
 }
 
@@ -78,5 +98,6 @@ export function isMeaningfulReport(report: AnnualReport): boolean {
     || report.dailyExerciseHours > 0
     || report.bookEntries.length > 0
     || report.placeEntries.length > 0
+    || report.customEntries.length > 0
     || report.highlight.trim().length > 0
 }
