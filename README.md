@@ -85,7 +85,8 @@ npm run native:portable
 
 ## Release
 
-The current release is `0.1`. The portable archive contains
+The current release is `0.1.1`. Versioned build folders and release archives use
+names such as `memolock-v0.1.1`. The portable archive contains
 `memolock-win_x64.exe` at its root. Memolock is currently not digitally code signed. Because of this, Windows Defender SmartScreen may display an "unrecognized app" warning the first time you run it.
 
 ## Project agents

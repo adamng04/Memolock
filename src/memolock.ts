@@ -17,6 +17,11 @@ export interface MemolockDocument {
   report: AnnualReport
 }
 
+export type MemolockConflictAction = 'copy' | 'overwrite'
+export type MemolockExportResult =
+  | { status: 'exported'; path: string }
+  | { status: 'conflict'; path: string }
+
 function cloneReport(report: AnnualReport): AnnualReport {
   return {
     ...report,
@@ -89,11 +94,24 @@ function pathSeparator() {
   return window.NL_OS === 'Windows' ? '\\' : '/'
 }
 
-export async function exportMemolockReport(report: AnnualReport, lock: ReportLock): Promise<string> {
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    const stats = await filesystem.getStats(path)
+    return stats.isFile
+  } catch {
+    return false
+  }
+}
+
+export async function exportMemolockReport(
+  report: AnnualReport,
+  lock: ReportLock,
+  conflictAction?: MemolockConflictAction,
+): Promise<MemolockExportResult> {
   const filename = `${report.year}_report.memolock`
   const contents = serializeMemolockDocument(report, lock)
   if (!isNativeRuntime()) {
-    if (typeof URL.createObjectURL !== 'function') return filename
+    if (typeof URL.createObjectURL !== 'function') return { status: 'exported', path: filename }
     const blob = new Blob([contents], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
@@ -101,7 +119,7 @@ export async function exportMemolockReport(report: AnnualReport, lock: ReportLoc
     anchor.download = filename
     anchor.click()
     URL.revokeObjectURL(url)
-    return filename
+    return { status: 'exported', path: filename }
   }
 
   const separator = pathSeparator()
@@ -115,8 +133,27 @@ export async function exportMemolockReport(report: AnnualReport, lock: ReportLoc
   } catch {
     // The export directory normally already exists after the first report.
   }
-  await filesystem.writeFile(file, contents)
-  return `Documents${separator}Memolock${separator}${filename}`
+  const existing = await fileExists(file)
+  if (existing && !conflictAction) {
+    return { status: 'conflict', path: `Documents${separator}Memolock${separator}${filename}` }
+  }
+
+  let outputFile = file
+  let outputFilename = filename
+  if (existing && conflictAction === 'copy') {
+    for (let index = 1; index <= 9999; index += 1) {
+      const candidateFilename = `${report.year}_report (${index}).memolock`
+      const candidate = `${directory}${separator}${candidateFilename}`
+      if (!await fileExists(candidate)) {
+        outputFile = candidate
+        outputFilename = candidateFilename
+        break
+      }
+      if (index === 9999) throw new Error('No available numbered Memolock filename was found.')
+    }
+  }
+  await filesystem.writeFile(outputFile, contents)
+  return { status: 'exported', path: `Documents${separator}Memolock${separator}${outputFilename}` }
 }
 
 export async function chooseMemolockFile(): Promise<{ name: string; contents: string } | null> {

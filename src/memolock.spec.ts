@@ -6,7 +6,7 @@ import { createBlankReport } from './types'
 
 const nativeApi = vi.hoisted(() => ({
   os: { getEnv: vi.fn(), showOpenDialog: vi.fn() },
-  filesystem: { createDirectory: vi.fn(), readFile: vi.fn(), writeFile: vi.fn() },
+  filesystem: { createDirectory: vi.fn(), getStats: vi.fn(), readFile: vi.fn(), writeFile: vi.fn() },
 }))
 vi.mock('@neutralinojs/lib', () => nativeApi)
 
@@ -23,6 +23,7 @@ describe('.memolock format', () => {
     vi.clearAllMocks()
     nativeApi.os.getEnv.mockResolvedValue('C:\\Users\\Ada')
     nativeApi.filesystem.createDirectory.mockResolvedValue(undefined)
+    nativeApi.filesystem.getStats.mockRejectedValue({ code: 'NE_FS_NOPATHE' })
     nativeApi.filesystem.writeFile.mockResolvedValue(undefined)
   })
 
@@ -55,13 +56,49 @@ describe('.memolock format', () => {
     window.NL_PATH = 'C:\\Portable\\Memolock'
     window.NL_OS = 'Windows'
     const report = { ...createBlankReport(2025), albumsListened: 20 }
-    const path = await exportMemolockReport(report, { year: 2025, lockedAt: '2026-01-01T00:00:00.000Z' })
+    const result = await exportMemolockReport(report, { year: 2025, lockedAt: '2026-01-01T00:00:00.000Z' })
 
-    expect(path).toBe('Documents\\Memolock\\2025_report.memolock')
+    expect(result).toEqual({ status: 'exported', path: 'Documents\\Memolock\\2025_report.memolock' })
     expect(nativeApi.filesystem.createDirectory).toHaveBeenCalledWith('C:\\Users\\Ada\\Documents\\Memolock')
     expect(nativeApi.filesystem.writeFile).toHaveBeenCalledWith(
       'C:\\Users\\Ada\\Documents\\Memolock\\2025_report.memolock',
       expect.stringContaining('"code": "LOCKED"'),
+    )
+  })
+
+  it('detects matching files, creates a numbered copy, or overwrites by choice', async () => {
+    window.NL_PATH = 'C:\\Portable\\Memolock'
+    window.NL_OS = 'Windows'
+    const report = { ...createBlankReport(2025), albumsListened: 20 }
+    const lock = { year: 2025, lockedAt: '2026-01-01T00:00:00.000Z' }
+
+    nativeApi.filesystem.getStats.mockReset().mockResolvedValue({ isFile: true })
+    expect(await exportMemolockReport(report, lock)).toEqual({
+      status: 'conflict',
+      path: 'Documents\\Memolock\\2025_report.memolock',
+    })
+    expect(nativeApi.filesystem.writeFile).not.toHaveBeenCalled()
+
+    nativeApi.filesystem.getStats.mockReset()
+      .mockResolvedValueOnce({ isFile: true })
+      .mockRejectedValueOnce({ code: 'NE_FS_NOPATHE' })
+    expect(await exportMemolockReport(report, lock, 'copy')).toEqual({
+      status: 'exported',
+      path: 'Documents\\Memolock\\2025_report (1).memolock',
+    })
+    expect(nativeApi.filesystem.writeFile).toHaveBeenLastCalledWith(
+      'C:\\Users\\Ada\\Documents\\Memolock\\2025_report (1).memolock',
+      expect.any(String),
+    )
+
+    nativeApi.filesystem.getStats.mockReset().mockResolvedValue({ isFile: true })
+    expect(await exportMemolockReport(report, lock, 'overwrite')).toEqual({
+      status: 'exported',
+      path: 'Documents\\Memolock\\2025_report.memolock',
+    })
+    expect(nativeApi.filesystem.writeFile).toHaveBeenLastCalledWith(
+      'C:\\Users\\Ada\\Documents\\Memolock\\2025_report.memolock',
+      expect.any(String),
     )
   })
 })

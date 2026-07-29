@@ -1,14 +1,14 @@
 {
   "name": "memolock",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "native:dev": "neu run",
-    "native:build": "npm run build && neu build --release",
-    "native:portable": "npm run build && neu build --clean --embed-resources",
+    "native:build": "npm run build && neu build --clean --release && node scripts/version-release-output.mjs",
+    "native:portable": "npm run build && neu build --clean --embed-resources && node scripts/version-release-output.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

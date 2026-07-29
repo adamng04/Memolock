@@ -35,6 +35,7 @@ const nativeApi = vi.hoisted(() => ({
   events: { on: vi.fn(), off: vi.fn() },
   filesystem: {
     createDirectory: vi.fn(),
+    getStats: vi.fn(),
     readFile: vi.fn(),
     writeFile: vi.fn(),
   },
@@ -107,6 +108,7 @@ describe('personal annual report', () => {
     nativeApi.os.getEnv.mockResolvedValue('C:\\Users\\Ada')
     nativeApi.os.showOpenDialog.mockResolvedValue([])
     nativeApi.filesystem.createDirectory.mockResolvedValue(undefined)
+    nativeApi.filesystem.getStats.mockRejectedValue({ code: 'NE_FS_NOPATHE' })
     nativeApi.filesystem.writeFile.mockResolvedValue(undefined)
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       callback(0)
@@ -339,7 +341,7 @@ describe('personal annual report', () => {
       expect.stringContaining('View details'),
     ])
     await wrapper.get('.sidebar > .settings-button').trigger('click')
-    expect(wrapper.get('.settings-panel').text()).toContain('Memolock · version 0.1')
+    expect(wrapper.get('.settings-panel').text()).toContain('Memolock · version 0.1.1')
     expect(wrapper.get('.settings-panel').text()).not.toMatch(/0\.1-rc1|0\.1\.0-rc\.2|prerelease/i)
     expect(wrapper.text()).not.toContain('Year in Data')
   })
@@ -732,6 +734,40 @@ describe('personal annual report', () => {
     expect(document.querySelector('.export-dialog')?.textContent).toContain('2025 report exported')
   })
 
+  it('asks before replacing a matching export and can create a numbered copy', async () => {
+    localStorage.setItem(archiveKey, JSON.stringify({
+      2025: { ...createBlankReport(2025), stepsPerDay: 7000 },
+    }))
+    const wrapper = await mountApp()
+    window.NL_PATH = 'C:\\Portable\\Memolock'
+    window.NL_OS = 'Windows'
+    nativeApi.filesystem.getStats
+      .mockResolvedValueOnce({ isFile: true })
+      .mockResolvedValueOnce({ isFile: true })
+      .mockRejectedValueOnce({ code: 'NE_FS_NOPATHE' })
+
+    await wrapper.get('.lock-button').trigger('click')
+    await wrapper.get('.confirmation-check input').setValue(true)
+    await wrapper.get('#lock-form').trigger('submit')
+    await flushPromises()
+
+    const conflictDialog = document.querySelector<HTMLElement>('.export-conflict-dialog')!
+    expect(conflictDialog.textContent).toContain('Matching file found')
+    expect(conflictDialog.textContent).toContain('2025_report.memolock')
+    expect([...conflictDialog.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+      'Skip',
+      'Make (1)',
+      'Overwrite',
+    ])
+    expect(nativeApi.filesystem.writeFile).toHaveBeenCalledTimes(1)
+
+    conflictDialog.querySelectorAll<HTMLButtonElement>('button')[1].click()
+    await flushPromises()
+    expect(nativeApi.filesystem.writeFile).toHaveBeenCalledTimes(2)
+    expect(nativeApi.filesystem.writeFile.mock.calls[1][0]).toBe('C:\\Users\\Ada\\Documents\\Memolock\\2025_report (1).memolock')
+    expect(document.querySelector('.export-dialog')?.textContent).toContain('2025_report (1).memolock')
+  })
+
   it('keeps a legacy year lock permanent while the newly completed year remains editable', async () => {
     vi.setSystemTime(new Date('2027-07-23T10:00:00Z'))
     localStorage.setItem(archiveKey, JSON.stringify({
@@ -836,6 +872,24 @@ describe('personal annual report', () => {
       expect.objectContaining({ type: 'text', title: 'Garden', content: 'Grew twelve tomatoes.' }),
     ])
 
+    const clippedContent = wrapper.get<HTMLElement>('.custom-text-card-content').element
+    Object.defineProperty(clippedContent, 'clientHeight', { configurable: true, value: 72 })
+    Object.defineProperty(clippedContent, 'scrollHeight', { configurable: true, value: 140 })
+    window.dispatchEvent(new Event('resize'))
+    await flushPromises()
+    expect(wrapper.get('.custom-entry-card').text()).toContain('Read more')
+    expect(styles).toContain('.custom-text-card {\n  height: 205px;')
+
+    const reader = wrapper.get<HTMLButtonElement>('.custom-entry-reader')
+    await reader.trigger('click')
+    const readingDialog = document.querySelector<HTMLElement>('.custom-entry-reading-dialog')!
+    expect(readingDialog.textContent).toContain('Garden')
+    expect(readingDialog.textContent).toContain('Grew twelve tomatoes.')
+    expect(readingDialog.querySelector('input, textarea, form')).toBeNull()
+    readingDialog.querySelector<HTMLButtonElement>('[aria-label="Close custom entry"]')!.click()
+    await flushPromises()
+    expect(document.activeElement).toBe(reader.element)
+
     const editButton = wrapper.get<HTMLButtonElement>('.edit-custom-entry')
     expect(editButton.attributes('aria-label')).toBe('Edit Garden')
     await editButton.trigger('click')
@@ -863,6 +917,7 @@ describe('personal annual report', () => {
   })
 
   it('validates and persists zero, decimal, and negative number custom entries as numbers', async () => {
+    expect(styles).toContain('.custom-number-card {\n  --accent: var(--accent-swatch, #72a34f);\n  gap: 0;')
     const wrapper = await mountApp()
     document.body.appendChild(wrapper.element)
     const launcher = wrapper.get<HTMLButtonElement>('.add-more-card')
@@ -1109,17 +1164,17 @@ describe('personal annual report', () => {
     expect(wrapper.get('.topbar').text()).not.toContain('Replacement attempt')
   })
 
-  it('uses public 0.1 branding and stable 0.1.0 Windows metadata consistently', async () => {
+  it('uses 0.1.1 branding and Windows metadata consistently', async () => {
     const wrapper = await mountApp()
     await wrapper.get('.sidebar > .settings-button').trigger('click')
-    expect(wrapper.get('.settings-panel').text()).toContain('version 0.1')
-    expect(wrapper.get('.sidebar').text()).toContain('Memolock 0.1')
+    expect(wrapper.get('.settings-panel').text()).toContain('version 0.1.1')
+    expect(wrapper.get('.sidebar').text()).toContain('Memolock 0.1.1')
     expect(packageManifest.name).toBe('memolock')
-    expect(packageManifest.version).toBe('0.1.0')
+    expect(packageManifest.version).toBe('0.1.1')
     expect(packageLock.name).toBe('memolock')
-    expect(packageLock.version).toBe('0.1.0')
-    expect(packageLock.packages['']).toMatchObject({ name: 'memolock', version: '0.1.0' })
-    expect(neutralinoConfig.version).toBe('0.1.0')
+    expect(packageLock.version).toBe('0.1.1')
+    expect(packageLock.packages['']).toMatchObject({ name: 'memolock', version: '0.1.1' })
+    expect(neutralinoConfig.version).toBe('0.1.1')
     expect(neutralinoConfig.applicationName).toBe('Memolock')
     expect(neutralinoConfig.description).toBe('Memolock')
     expect(neutralinoConfig.author).toBe('adamngshrine')
@@ -1128,7 +1183,7 @@ describe('personal annual report', () => {
     expect(neutralinoConfig.cli.binaryName).toBe('memolock')
     expect(indexHtml).toContain('<title>Memolock</title>')
     expect(neutralinoConfig.applicationId).toBe('js.yearindata.app')
-    expect(readme).toContain('The current release is `0.1`.')
+    expect(readme).toContain('The current release is `0.1.1`.')
     expect([wrapper.text(), packageManifest.version, neutralinoConfig.version, readme].join('\n')).not.toMatch(/0\.1-rc1|0\.1\.0-rc\.2/i)
   })
 })

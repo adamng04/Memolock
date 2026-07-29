@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { os } from '@neutralinojs/lib'
 import seedReport from './data/annual-report.json'
 import countries from './data/countries.json'
 import { accentPalette } from './accentPalette'
 import { chooseMemolockFile, exportMemolockReport, parseMemolockDocument } from './memolock'
+import type { MemolockConflictAction } from './memolock'
 import { loadStoredData, saveStoredData } from './storage'
 import { createBlankReport, isMeaningfulReport } from './types'
-import type { AnnualReport, AppSettings, BookEntry, CustomEntry, PlaceEntry, ReportArchive, ReportLocks } from './types'
+import type { AnnualReport, AppSettings, BookEntry, CustomEntry, CustomTextEntry, PlaceEntry, ReportArchive, ReportLock, ReportLocks } from './types'
 
 const params = new URLSearchParams(window.location.search)
 const isSavedView = params.get('report') === 'saved'
@@ -51,6 +52,7 @@ const importFileInput = ref<HTMLInputElement | null>(null)
 const importDragging = ref(false)
 const importResult = ref<{ kind: 'success' | 'error'; title: string; message: string } | null>(null)
 const exportNotice = ref<{ year: number; path: string; error?: boolean } | null>(null)
+const exportConflict = ref<{ report: AnnualReport; lock: ReportLock; path: string } | null>(null)
 const customEntryDialog = ref<'chooser' | 'text' | 'number' | null>(null)
 const isCustomEntryOpen = computed(() => customEntryDialog.value !== null)
 const customEntryTrigger = ref<HTMLElement | null>(null)
@@ -59,6 +61,9 @@ const customEntryError = ref('')
 const customEntryInvalid = ref<'title' | 'content' | 'value' | null>(null)
 const lastCustomEntryChoice = ref<'text' | 'number'>('text')
 const editingCustomEntryId = ref<string | null>(null)
+const overflowingCustomEntryIds = ref<Set<string>>(new Set())
+const activeCustomTextEntry = ref<CustomTextEntry | null>(null)
+const customTextEntryTrigger = ref<HTMLElement | null>(null)
 const activeDetail = ref<'books' | 'places' | null>(null)
 const detailTrigger = ref<HTMLElement | null>(null)
 const countryQueries = reactive<Record<string, string>>({})
@@ -179,6 +184,19 @@ const chartBars = computed(() => {
   })
 })
 
+function measureCustomTextOverflow() {
+  const overflowing = new Set<string>()
+  document.querySelectorAll<HTMLElement>('.custom-text-card-content').forEach((element) => {
+    const id = element.dataset.entryId
+    if (id && element.scrollHeight > element.clientHeight + 1) overflowing.add(id)
+  })
+  overflowingCustomEntryIds.value = overflowing
+}
+async function scheduleCustomTextMeasurement() {
+  await nextTick()
+  requestAnimationFrame(measureCustomTextOverflow)
+}
+
 function applyTheme() {
   document.documentElement.dataset.theme = settings.theme
   document.documentElement.style.colorScheme = settings.theme === 'light' ? 'light' : 'dark'
@@ -208,8 +226,11 @@ onMounted(async () => {
   } finally {
     isLoading.value = false
     requestAnimationFrame(() => document.querySelector<HTMLElement>('.new-year-dialog')?.focus())
+    void scheduleCustomTextMeasurement()
   }
 })
+window.addEventListener('resize', measureCustomTextOverflow)
+onBeforeUnmount(() => window.removeEventListener('resize', measureCustomTextOverflow))
 
 async function persist(includeDraft = false) {
   if (includeDraft) persistedDraft.value = cloneReport(draft)
@@ -227,6 +248,7 @@ function selectYear(year: number) {
   selectedYear.value = year
   activeView.value = 'report'
   sidebarOpen.value = false
+  void scheduleCustomTextMeasurement()
 }
 async function openComparison() {
   activeView.value = 'comparison'
@@ -277,6 +299,7 @@ async function processMemolockImport(name: string, contents: string) {
       title: `${year} report imported`,
       message: imported.status.locked ? 'Status code: LOCKED. This report is permanently read-only.' : 'Status code: UNLOCKED. Normal year editing rules apply.',
     }
+    void scheduleCustomTextMeasurement()
   } catch (error) {
     importResult.value = {
       kind: 'error',
@@ -308,11 +331,22 @@ async function handleImportDrop(event: DragEvent) {
   const file = event.dataTransfer?.files[0]
   if (file) await processMemolockImport(file.name, await file.text())
 }
-async function exportLockedReport(reportToExport = report.value, lock = activeLock.value) {
+async function exportLockedReport(
+  reportToExport = report.value,
+  lock = activeLock.value,
+  conflictAction?: MemolockConflictAction,
+) {
   if (!lock) return
   try {
-    const path = await exportMemolockReport(reportToExport, lock)
-    exportNotice.value = { year: reportToExport.year, path }
+    const result = await exportMemolockReport(reportToExport, lock, conflictAction)
+    if (result.status === 'conflict') {
+      exportConflict.value = { report: cloneReport(reportToExport), lock: { ...lock }, path: result.path }
+      await nextTick()
+      document.querySelector<HTMLElement>('.export-conflict-dialog')?.focus()
+      return
+    }
+    exportConflict.value = null
+    exportNotice.value = { year: reportToExport.year, path: result.path }
   } catch (error) {
     exportNotice.value = {
       year: reportToExport.year,
@@ -322,6 +356,13 @@ async function exportLockedReport(reportToExport = report.value, lock = activeLo
   }
   await nextTick()
   document.querySelector<HTMLElement>('.export-dialog')?.focus()
+}
+async function resolveExportConflict(action: 'skip' | MemolockConflictAction) {
+  const conflict = exportConflict.value
+  if (!conflict) return
+  exportConflict.value = null
+  if (action === 'skip') return
+  await exportLockedReport(conflict.report, conflict.lock, action)
 }
 function beginCompletedYearReport() {
   if (locks[reportYear] || isSavedView) return
@@ -467,6 +508,16 @@ async function closeCustomEntry() {
   await nextTick()
   customEntryTrigger.value?.focus()
 }
+async function openCustomTextEntry(entry: CustomTextEntry, event: MouseEvent) {
+  customTextEntryTrigger.value = event.currentTarget as HTMLElement
+  activeCustomTextEntry.value = entry
+  await nextTick()
+  document.querySelector<HTMLElement>('.custom-entry-reading-dialog')?.focus()
+}
+function closeCustomTextEntry() {
+  activeCustomTextEntry.value = null
+  requestAnimationFrame(() => customTextEntryTrigger.value?.focus())
+}
 async function saveCustomEntry() {
   if (!canEditSelectedYear.value || (customEntryDialog.value !== 'text' && customEntryDialog.value !== 'number')) return
   const title = customEntryDraft.title.trim()
@@ -514,6 +565,7 @@ async function saveCustomEntry() {
   try {
     await persist()
     await closeCustomEntry()
+    void scheduleCustomTextMeasurement()
   } catch (error) {
     archive[selectedYear.value] = previous
     customEntryError.value = error instanceof Error ? error.message : 'The custom entry could not be saved.'
@@ -686,7 +738,7 @@ function normalizeOptionalNumbers(value: AnnualReport) {
         <button class="settings-button chart-button" type="button" :class="{ active: activeView === 'comparison' }" :aria-current="activeView === 'comparison' ? 'page' : undefined" @click="openComparison"><span aria-hidden="true">▥</span> Compare years</button>
       </nav>
       <button class="settings-button" type="button" @click="openSettings"><span aria-hidden="true">⚙</span> Settings</button>
-      <div class="local-note"><div><strong>Memolock 0.1</strong><span style="font-size: 12px;">adamngshrine {{ currentYear }}</span></div></div>
+      <div class="local-note"><div><strong>Memolock 0.1.1</strong><span style="font-size: 12px;">adamngshrine {{ currentYear }}</span></div></div>
     </aside>
     <button v-if="sidebarOpen" class="sidebar-scrim" aria-label="Close year menu" @click="sidebarOpen = false"></button>
     <main>
@@ -736,14 +788,16 @@ function normalizeOptionalNumbers(value: AnnualReport) {
             :class="entry.type === 'number' ? 'custom-number-card' : 'custom-text-card'"
             :aria-label="entry.type === 'number' ? `${entry.title}: ${entry.value}` : undefined"
           >
-            <button v-if="canEditSelectedYear" class="edit-custom-entry" type="button" :aria-label="`Edit ${entry.title}`" @click="editCustomEntry(entry, $event)">Edit</button>
+            <button v-if="entry.type === 'text'" class="custom-entry-reader" type="button" :aria-label="`Read ${entry.title}`" @click="openCustomTextEntry(entry, $event)"></button>
+            <button v-if="canEditSelectedYear" class="edit-custom-entry" type="button" :aria-label="`Edit ${entry.title}`" @click.stop="editCustomEntry(entry, $event)">Edit</button>
             <template v-if="entry.type === 'number'">
               <strong>{{ formatCustomNumber(entry.value) }}</strong>
               <div><h2>{{ entry.title }}</h2><p>Custom number</p></div>
             </template>
             <template v-else>
               <strong>{{ entry.title }}</strong>
-              <p>{{ entry.content }}</p>
+              <p class="custom-text-card-content" :data-entry-id="entry.id">{{ entry.content }}</p>
+              <span v-if="overflowingCustomEntryIds.has(entry.id)" class="custom-read-more">Read more</span>
             </template>
           </article>
           <button
@@ -825,6 +879,15 @@ function normalizeOptionalNumbers(value: AnnualReport) {
       </div>
     </main>
     <Teleport to="body">
+      <div v-if="activeCustomTextEntry" class="overlay" @click.self="closeCustomTextEntry" @keydown="handleModalKeydown($event, closeCustomTextEntry)">
+        <section class="custom-entry-reading-dialog" role="dialog" aria-modal="true" aria-labelledby="custom-entry-reading-title" tabindex="-1">
+          <div class="modal-head">
+            <div><p>Custom entry</p><h2 id="custom-entry-reading-title">{{ activeCustomTextEntry.title }}</h2></div>
+            <button type="button" aria-label="Close custom entry" @click="closeCustomTextEntry">×</button>
+          </div>
+          <div class="custom-entry-reading-content"><p>{{ activeCustomTextEntry.content }}</p></div>
+        </section>
+      </div>
       <div v-if="isImportOpen" class="overlay" @click.self="closeImport" @keydown="handleModalKeydown($event, closeImport)">
         <section class="import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title" tabindex="-1">
           <div class="modal-head">
@@ -859,6 +922,20 @@ function normalizeOptionalNumbers(value: AnnualReport) {
           <h2 id="export-title">{{ exportNotice.error ? 'Export failed' : `${exportNotice.year} report exported` }}</h2>
           <p v-if="!exportNotice.error" class="export-path">Exported to {{ exportNotice.path }}.</p>
           <p v-else class="storage-error" role="alert">{{ exportNotice.path }}</p>
+        </section>
+      </div>
+      <div v-if="exportConflict" class="overlay" @keydown.esc="resolveExportConflict('skip')">
+        <section class="export-dialog export-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="export-conflict-title" tabindex="-1">
+          <span class="export-icon" aria-hidden="true">!</span>
+          <p>Matching file found</p>
+          <h2 id="export-conflict-title">Report already exists</h2>
+          <p class="export-path">{{ exportConflict.path }}</p>
+          <p>Choose what Windows should do with this export.</p>
+          <div class="export-conflict-actions">
+            <button class="secondary" type="button" @click="resolveExportConflict('skip')">Skip</button>
+            <button class="primary" type="button" @click="resolveExportConflict('copy')">Make (1)</button>
+            <button class="danger" type="button" @click="resolveExportConflict('overwrite')">Overwrite</button>
+          </div>
         </section>
       </div>
       <div v-if="showNewYearPrompt" class="overlay" @click.self="dismissNewYearPrompt" @keydown.esc="dismissNewYearPrompt">
@@ -1070,7 +1147,7 @@ function normalizeOptionalNumbers(value: AnnualReport) {
             ><span aria-hidden="true">{{ settings.accent === color.id ? '✓' : '' }}</span></button>
           </div>
         </section>
-        <section class="settings-section about"><div><h3>About this app</h3><p>Memolock · version 0.1</p></div><p>Your archive stays beside the app, while portable .memolock copies export to Documents. There are no accounts, analytics, or cloud services.</p></section>
+        <section class="settings-section about"><div><h3>About this app</h3><p>Memolock · version 0.1.1</p></div><p>Your archive stays beside the app, while portable .memolock copies export to Documents. There are no accounts, analytics, or cloud services.</p></section>
         <p v-if="storageError" class="storage-error" role="alert">{{ storageError }}</p>
         <a class="help-button" href="https://adamngshrine.com/index/miscs/memolock" @click.prevent="openHelp"><span>Help desk</span><small>↗</small></a>
       </section>
