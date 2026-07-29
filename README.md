@@ -1,9 +1,11 @@
 # Memolock
 
-Memolock is a private, offline desktop application for recording and
-reviewing a personal annual report. It stores reports locally beside the
-portable executable and does not require an account, cloud service, or
-installer.
+Memolock is a private, offline desktop application for recording, preserving,
+and reviewing an annual personal report. It does not require an account, cloud
+service, or installer.
+
+Private by design. Memolock never connects to the internet. Your reports remain
+on your computer and are stored in plain JSON files that you control.
 
 ## Warning
 
@@ -19,7 +21,9 @@ provided without a warranty.
 - Daily steps, albums listened, sleep, and exercise statistics
 - Light, dark, and true-black OLED themes with 30 accent colors
 - Local JSON storage
-- Permanent annual locking
+- Permanent annual locking: once a year's report is locked, it becomes
+  read-only forever. This preserves an authentic snapshot of that year and
+  prevents accidental or intentional edits later.
 - Portable `.memolock` report export and import
 - Portable Windows executable
 
@@ -87,7 +91,9 @@ npm run native:portable
 
 The current release is `0.1.1`. Versioned build folders and release archives use
 names such as `memolock-v0.1.1`. The portable archive contains
-`memolock-win_x64.exe` at its root. Memolock is currently not digitally code signed. Because of this, Windows Defender SmartScreen may display an "unrecognized app" warning the first time you run it.
+`memolock-win_x64.exe` at its root. Windows Defender SmartScreen may display an
+"unrecognized app" warning the first time you run it because Memolock is not
+yet digitally signed.
 
 ## Project agents
 
